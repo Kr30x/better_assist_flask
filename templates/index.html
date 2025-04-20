@@ -1,0 +1,676 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Spreadsheet Data Loader</title>
+    <style>
+        body { font-family: sans-serif; }
+        .input-group { margin-bottom: 10px; display: inline-block; margin-right: 15px; vertical-align: top; }
+        .input-group label { display: block; margin-bottom: 3px; font-weight: bold; }
+        .input-group input, .input-group select { width: 90%; max-width: 500px; padding: 8px; font-size: 14px; margin-bottom: 5px; }
+        .input-group input[type="number"] { width: 80px; }
+        .input-group button.inline-btn { margin-left: 5px; padding: 5px 8px; font-size: 12px; vertical-align: middle; }
+        #controls { margin-bottom: 20px; border-bottom: 1px solid #ccc; padding-bottom: 15px; }
+        #columnSettingsArea { margin-top: 15px; margin-bottom: 10px; }
+        #columnSettingsToggle, #columnPresetSelect, #hideZeroSumLabel { margin-right: 10px; vertical-align: middle; }
+        #columnPresetSelect { padding: 5px; }
+        #hideZeroSumLabel { font-weight: normal; }
+        #columnSelectorContainer {
+            border: 1px solid #eee;
+            padding: 10px;
+            max-height: 200px;
+            overflow-y: auto;
+            margin-top: 5px; /* Adjusted margin */
+            margin-bottom: 10px;
+            display: none; /* Hidden by default */
+        }
+        #columnSelectorContainer label { display: block; margin-bottom: 5px; }
+        #columnSelectorContainer input[type="checkbox"] { margin-right: 5px; }
+        #applyColsBtn { margin-top: 10px; padding: 5px 10px; }
+        table { border-collapse: collapse; width: 100%; margin-top: 20px; }
+        th, td { border: 1px solid #ddd; padding: 8px; text-align: left; word-wrap: break-word; vertical-align: top; position: relative; /* Needed for positioning note editor */ }
+        th { background-color: #f2f2f2; }
+        tr:nth-child(even) { background-color: #f9f9f9; }
+        tr:hover { background-color: #f1f1f1; }
+        td a img.link-icon { /* Style for the link icon */
+            width: 16px;
+            height: 16px;
+            vertical-align: middle;
+        }
+        #loadDataBtn { padding: 10px 15px; font-size: 16px; cursor: pointer; margin-bottom: 15px; vertical-align: bottom; }
+        #loadingMessage { margin-top: 15px; color: grey; display: none; }
+        #errorMessage { margin-top: 15px; color: red; display: none; }
+        #dataTableContainer { margin-top: 20px; }
+        td.editable-cell:hover { background-color: #e8f0fe; cursor: pointer; }
+        td.has-note { background-color: #d9ead3; /* Light green */ }
+        td.has-note:hover { background-color: #c8e0bd; /* Darker green on hover */ }
+        #noteEditorPopup {
+            display: none;
+            position: absolute;
+            border: 1px solid #666;
+            background-color: #f9f9f9;
+            padding: 15px;
+            z-index: 100;
+            min-width: 250px;
+            box-shadow: 3px 3px 8px rgba(0,0,0,0.2);
+            border-radius: 4px;
+        }
+        #noteEditorPopup textarea {
+            width: 100%;
+            box-sizing: border-box;
+            margin-bottom: 10px;
+        }
+        #noteEditorPopup button {
+            margin-right: 5px;
+            padding: 5px 10px;
+        }
+    </style>
+</head>
+<body>
+    <h1>Simple sheet editor</h1>
+
+    <div id="controls">
+        <div class="input-group">
+            <label for="sheetUrl">Google Sheet URL:</label>
+            <input type="url" id="sheetUrl" name="sheetUrl" placeholder="https://docs.google.com/spreadsheets/d/.../edit" required value="https://docs.google.com/spreadsheets/d/1Ajsa7Ve9C725CFESsfWPFS1cfcorSlBpQXbsUMN-aOE/edit">
+            <button id="fetchSheetsBtn" class="inline-btn">Load Sheets</button> <span id="sheetLoadStatus"></span>
+        </div>
+        <div class="input-group">
+            <label for="sheetNameSelect">Sheet Name:</label>
+            <select id="sheetNameSelect" name="sheetNameSelect" required>
+                <option value="" disabled selected>-- Load sheets first --</option>
+            </select>
+        </div>
+        <div class="input-group">
+            <label for="startRow">Start Data Row:</label>
+            <input type="number" id="startRow" name="startRow" min="1" placeholder="e.g., 1">
+        </div>
+        <div class="input-group">
+            <label for="endRow">End Data Row:</label>
+            <input type="number" id="endRow" name="endRow" min="1" placeholder="e.g., 50">
+        </div>
+        <button id="loadDataBtn">Load Spreadsheet Data</button>
+    </div>
+
+    <!-- Collapsible Section -->
+    <div id="columnSettingsArea">
+        <button id="columnSettingsToggle">Column Settings ▼</button>
+        <label for="columnPresetSelect" style="font-weight: bold;">Column Preset:</label>
+        <select id="columnPresetSelect">
+            <option value="" selected>-- Select Preset --</option>
+            <option value="default">Default</option>
+            <option value="all">All</option>
+        </select>
+        <label id="hideZeroSumLabel" style="margin-left: 15px;">
+            <input type="checkbox" id="hideZeroSumCheckbox">
+            Hide rows with ∑ = 0
+        </label>
+        <div id="columnSelectorContainer">
+            <strong>Select Columns to Display:</strong>
+            <div id="columnCheckboxes"></div>
+            <button id="applyColsBtn">Apply Columns</button>
+        </div>
+    </div>
+    <!-- End Collapsible Section -->
+
+    <div id="loadingMessage">Loading data... Please wait.</div>
+    <div id="errorMessage"></div>
+    <div id="dataTableContainer">
+        <!-- Table will be inserted here by JavaScript -->
+    </div>
+
+    <!-- Note Editor Popup -->
+    <div id="noteEditorPopup">
+        <label for="noteEditorText" style="display: block; margin-bottom: 5px; font-weight: bold;">Edit Note:</label>
+        <textarea id="noteEditorText" rows="4" cols="30"></textarea><br>
+        <button id="saveNoteBtn">Save</button>
+        <button id="cancelNoteBtn" type="button">Cancel</button>
+        <input type="hidden" id="noteEditorA1">
+        <input type="hidden" id="noteEditorCellId">
+    </div>
+    <!-- End Note Editor Popup -->
+
+    <script>
+        const sheetUrlInput = document.getElementById('sheetUrl');
+        const fetchSheetsButton = document.getElementById('fetchSheetsBtn');
+        const sheetLoadStatus = document.getElementById('sheetLoadStatus');
+        const sheetNameSelect = document.getElementById('sheetNameSelect');
+        const startRowInput = document.getElementById('startRow');
+        const endRowInput = document.getElementById('endRow');
+        const loadButton = document.getElementById('loadDataBtn');
+        const loadingMessage = document.getElementById('loadingMessage');
+        const errorMessage = document.getElementById('errorMessage');
+        const tableContainer = document.getElementById('dataTableContainer');
+        const columnSettingsToggle = document.getElementById('columnSettingsToggle');
+        const columnPresetSelect = document.getElementById('columnPresetSelect');
+        const hideZeroSumCheckbox = document.getElementById('hideZeroSumCheckbox');
+        const columnSelectorDiv = document.getElementById('columnSelectorContainer');
+        const columnCheckboxesDiv = document.getElementById('columnCheckboxes');
+        const applyColsButton = document.getElementById('applyColsBtn');
+        const noteEditorPopup = document.getElementById('noteEditorPopup');
+        const noteEditorText = document.getElementById('noteEditorText');
+        const saveNoteBtn = document.getElementById('saveNoteBtn');
+        const cancelNoteBtn = document.getElementById('cancelNoteBtn');
+        const noteEditorA1 = document.getElementById('noteEditorA1');
+        const noteEditorCellId = document.getElementById('noteEditorCellId');
+
+        let currentSpreadsheetId = '';
+        let currentSheetName = '';
+        let fullHeader = [];
+        let filteredRows = [];
+        let fetchedNotes = {};
+        let sumColumnIndex = -1;
+        hideZeroSumCheckbox.checked = false;
+
+        fetchSheetsButton.addEventListener('click', fetchSheetNames);
+        loadButton.addEventListener('click', fetchData);
+        applyColsButton.addEventListener('click', applyColumnFilter);
+        columnSettingsToggle.addEventListener('click', toggleColumnSettings);
+        columnPresetSelect.addEventListener('change', applyPreset);
+        hideZeroSumCheckbox.addEventListener('change', applyColumnFilter);
+        saveNoteBtn.addEventListener('click', saveNote);
+        cancelNoteBtn.addEventListener('click', hideNoteEditor);
+
+        function getSpreadsheetIdFromUrl(url) {
+            const match = url.match(/\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/);
+            return match ? match[1] : null;
+        }
+
+        function isUrl(str) {
+            if (typeof str !== 'string') return false;
+            // Basic check for http:// or https:// prefix
+            return str.trim().startsWith('http://') || str.trim().startsWith('https://');
+        }
+
+        async function fetchSheetNames() {
+            const sheetUrl = sheetUrlInput.value.trim();
+            sheetLoadStatus.textContent = '';
+            errorMessage.style.display = 'none';
+            errorMessage.textContent = '';
+
+            const spreadsheetId = getSpreadsheetIdFromUrl(sheetUrl);
+            if (!spreadsheetId) {
+                sheetLoadStatus.textContent = 'Invalid URL';
+                sheetLoadStatus.style.color = 'red';
+                return;
+            }
+
+            sheetLoadStatus.textContent = 'Loading...';
+            sheetLoadStatus.style.color = 'grey';
+            fetchSheetsButton.disabled = true;
+            sheetNameSelect.innerHTML = '<option value="" disabled selected>Loading...</option>';
+
+            try {
+                const response = await fetch(`/get-sheet-names?id=${encodeURIComponent(spreadsheetId)}`);
+                const data = await response.json();
+
+                if (!response.ok) {
+                    const errorMsg = data.error || `HTTP error! Status: ${response.status}`;
+                    throw new Error(errorMsg);
+                }
+
+                if (data.error) {
+                    throw new Error(data.error);
+                }
+
+                sheetNameSelect.innerHTML = '';
+                if (data.sheet_names && data.sheet_names.length > 0) {
+                    data.sheet_names.forEach(name => {
+                        const option = document.createElement('option');
+                        option.value = name;
+                        option.textContent = name;
+                        sheetNameSelect.appendChild(option);
+                    });
+                    if (sheetNameSelect.options.length > 0) {
+                        sheetNameSelect.selectedIndex = 0;
+                    }
+                    sheetLoadStatus.textContent = 'Loaded!';
+                    sheetLoadStatus.style.color = 'green';
+                } else {
+                    sheetNameSelect.innerHTML = '<option value="" disabled selected>-- No sheets found --</option>';
+                    sheetLoadStatus.textContent = 'No sheets found';
+                    sheetLoadStatus.style.color = 'orange';
+                }
+
+            } catch (error) {
+                console.error('Error fetching sheet names:', error);
+                sheetLoadStatus.textContent = `Error: ${error.message}`;
+                sheetLoadStatus.style.color = 'red';
+                sheetNameSelect.innerHTML = '<option value="" disabled selected>-- Error loading sheets --</option>';
+            } finally {
+                fetchSheetsButton.disabled = false;
+                setTimeout(() => { sheetLoadStatus.textContent = ''; }, 5000);
+            }
+        }
+
+        async function fetchData() {
+            const sheetUrl = sheetUrlInput.value.trim();
+            const sheetName = sheetNameSelect.value;
+            const startRow = startRowInput.value.trim();
+            const endRow = endRowInput.value.trim();
+
+            errorMessage.style.display = 'none';
+            errorMessage.textContent = '';
+
+            if (!sheetUrl) {
+                errorMessage.textContent = 'Error: Please enter a Google Sheet URL.';
+                errorMessage.style.display = 'block';
+                return;
+            }
+            currentSpreadsheetId = getSpreadsheetIdFromUrl(sheetUrl);
+            if (!currentSpreadsheetId) {
+                errorMessage.textContent = 'Error: Could not extract Spreadsheet ID from the provided URL.';
+                errorMessage.style.display = 'block';
+                return;
+            }
+            if (!sheetName) {
+                errorMessage.textContent = 'Error: Please load and select a Sheet Name.';
+                errorMessage.style.display = 'block';
+                return;
+            }
+            currentSheetName = sheetName;
+            let startRowNum = startRow ? parseInt(startRow, 10) : null;
+            let endRowNum = endRow ? parseInt(endRow, 10) : null;
+            if (startRow && (isNaN(startRowNum) || startRowNum < 1)) {
+                 errorMessage.textContent = 'Error: Start Data Row must be a positive number.';
+                 errorMessage.style.display = 'block';
+                 return;
+            }
+             if (endRow && (isNaN(endRowNum) || endRowNum < 1)) {
+                 errorMessage.textContent = 'Error: End Data Row must be a positive number.';
+                 errorMessage.style.display = 'block';
+                 return;
+            }
+            if (startRowNum !== null && endRowNum !== null && startRowNum > endRowNum) {
+                 errorMessage.textContent = 'Error: Start Data Row cannot be greater than End Data Row.';
+                 errorMessage.style.display = 'block';
+                 return;
+            }
+
+            tableContainer.innerHTML = '';
+            columnSelectorDiv.style.display = 'none';
+            columnSettingsToggle.textContent = 'Column Settings ▼';
+            columnCheckboxesDiv.innerHTML = '';
+            columnPresetSelect.value = '';
+            hideZeroSumCheckbox.checked = false;
+            fetchedNotes = {};
+            sumColumnIndex = -1;
+            hideNoteEditor();
+            loadingMessage.style.display = 'block';
+            loadButton.disabled = true;
+            applyColsButton.disabled = true;
+            columnSettingsToggle.disabled = true;
+            columnPresetSelect.disabled = true;
+            hideZeroSumCheckbox.disabled = true;
+
+            try {
+                let apiUrl = `/load-data?id=${encodeURIComponent(currentSpreadsheetId)}&sheet=${encodeURIComponent(currentSheetName)}`;
+                if (startRowNum !== null) { apiUrl += `&start_row=${startRowNum}`; }
+                if (endRowNum !== null) { apiUrl += `&end_row=${endRowNum}`; }
+
+                const response = await fetch(apiUrl);
+                if (!response.ok) {
+                    let errorMsg = `HTTP error! Status: ${response.status}`;
+                    try { const errorData = await response.json(); errorMsg = errorData.error || errorMsg; } catch (e) { /* Ignore */ }
+                    throw new Error(errorMsg);
+                }
+                const data = await response.json();
+                if (data.error) { throw new Error(data.error); }
+
+                fullHeader = data.header || [];
+                filteredRows = data.rows || [];
+                fetchedNotes = data.notes || {};
+
+                sumColumnIndex = fullHeader.findIndex(h => h === '∑');
+                if (sumColumnIndex === -1) {
+                    console.warn("Header '∑' not found. Hide rows filter will not work.");
+                }
+
+                if (fullHeader.length > 0) {
+                    populateColumnSelector(fullHeader);
+                    columnSelectorDiv.style.display = 'block';
+                    applyColsButton.disabled = false;
+                    columnSettingsToggle.disabled = false;
+                    columnPresetSelect.disabled = false;
+                    hideZeroSumCheckbox.disabled = (sumColumnIndex === -1);
+                    columnPresetSelect.value = 'default';
+                    applyPreset({ target: columnPresetSelect });
+                } else {
+                     tableContainer.innerHTML = '<p>No header found. Cannot display data or column selector.</p>';
+                     columnPresetSelect.disabled = true;
+                     hideZeroSumCheckbox.disabled = true;
+                }
+
+            } catch (error) {
+                console.error('Error fetching data:', error);
+                errorMessage.textContent = `Error: ${error.message}`;
+                errorMessage.style.display = 'block';
+                columnSettingsToggle.disabled = false;
+                columnPresetSelect.disabled = false;
+                 hideZeroSumCheckbox.disabled = true;
+            } finally {
+                loadingMessage.style.display = 'none';
+                loadButton.disabled = false;
+            }
+        }
+
+        function populateColumnSelector(headers) {
+            columnCheckboxesDiv.innerHTML = '';
+            headers.forEach((headerName, index) => {
+                let labelText = headerName;
+                let checkboxValue = headerName;
+                if (headerName === null || String(headerName).trim() === '') {
+                    let colLetter = '';
+                    let tempIndex = index;
+                    while (tempIndex >= 0) {
+                        colLetter = String.fromCharCode(65 + (tempIndex % 26)) + colLetter;
+                        tempIndex = Math.floor(tempIndex / 26) - 1;
+                    }
+                    labelText = `(Column ${colLetter})`;
+                    checkboxValue = labelText;
+                    console.log(`Header at index ${index} is empty, using placeholder: ${labelText}`);
+                }
+
+                const label = document.createElement('label');
+                const checkbox = document.createElement('input');
+                checkbox.type = 'checkbox';
+                checkbox.value = checkboxValue;
+                checkbox.dataset.index = index;
+                checkbox.checked = true;
+
+                label.appendChild(checkbox);
+                label.appendChild(document.createTextNode(labelText));
+                columnCheckboxesDiv.appendChild(label);
+            });
+        }
+
+        function applyColumnFilter() {
+            const selectedHeaders = [];
+            const selectedIndices = [];
+            const checkboxes = columnCheckboxesDiv.querySelectorAll('input[type="checkbox"]:checked');
+
+            checkboxes.forEach(cb => {
+                selectedHeaders.push(cb.value);
+                selectedIndices.push(parseInt(cb.dataset.index, 10));
+            });
+
+            if (selectedHeaders.length === 0) {
+                errorMessage.textContent = 'Error: Please select at least one column to display.';
+                errorMessage.style.display = 'block';
+                tableContainer.innerHTML = '';
+                return;
+            }
+            errorMessage.style.display = 'none';
+
+            let rowsToProcess = filteredRows;
+            const hideZero = hideZeroSumCheckbox.checked;
+
+            if (hideZero && sumColumnIndex !== -1) {
+                 console.log(`Filtering rows where column ${sumColumnIndex} (∑) is 0.`);
+                 rowsToProcess = rowsToProcess.filter(row => {
+                     return !(row && row.length > sumColumnIndex && parseFloat(row[sumColumnIndex]) === 0);
+                 });
+                 console.log(`Rows after filtering: ${rowsToProcess.length}`);
+            }
+
+            generateFilteredTable(selectedHeaders, selectedIndices, rowsToProcess);
+        }
+
+        function generateFilteredTable(selectedHeaders, selectedIndices, rowsToDisplay) {
+            tableContainer.innerHTML = '';
+
+            if (!selectedHeaders || selectedHeaders.length === 0 ) {
+                 tableContainer.innerHTML = '<p>No columns selected.</p>';
+                 return;
+            }
+
+            let numColDisplayIndex = -1;
+            let originalNumColIndex = -1;
+            const numHeaderIndexInSelected = selectedHeaders.findIndex(h => h === '№');
+            if (numHeaderIndexInSelected !== -1) {
+                 numColDisplayIndex = numHeaderIndexInSelected;
+                 originalNumColIndex = selectedIndices[numColDisplayIndex];
+                 console.log(`'№' column found at selected index: ${numColDisplayIndex}, original index: ${originalNumColIndex}`);
+            } else {
+                 console.error("CRITICAL: '№' column header not found among selected headers. Cannot determine correct row numbers for notes.");
+            }
+
+            if (rowsToDisplay === null || rowsToDisplay.length === 0) {
+                 const emptyTable = document.createElement('table');
+                 const emptyThead = document.createElement('thead');
+                 const emptyHeaderRow = document.createElement('tr');
+                 selectedHeaders.forEach(headerText => {
+                    const th = document.createElement('th');
+                    th.textContent = headerText;
+                    emptyHeaderRow.appendChild(th);
+                 });
+                 emptyThead.appendChild(emptyHeaderRow);
+                 emptyTable.appendChild(emptyThead);
+                 emptyTable.appendChild(document.createElement('tbody'));
+                 tableContainer.appendChild(emptyTable);
+                 const noDataMsg = document.createElement('p');
+                 noDataMsg.textContent = 'No data rows found matching the criteria.';
+                 tableContainer.appendChild(noDataMsg);
+                 return;
+            }
+
+            const table = document.createElement('table');
+            const thead = document.createElement('thead');
+            const tbody = document.createElement('tbody');
+
+            const headerRow = document.createElement('tr');
+            selectedHeaders.forEach(headerText => {
+                 const th = document.createElement('th');
+                 th.textContent = headerText;
+                 headerRow.appendChild(th);
+            });
+            thead.appendChild(headerRow);
+
+            rowsToDisplay.forEach((rowData, displayRowIndex) => {
+                const row = document.createElement('tr');
+
+                let sheetRowNum = -1;
+                let rowNumStr = '';
+                if (originalNumColIndex !== -1 && rowData && rowData.length > originalNumColIndex) {
+                    rowNumStr = String(rowData[originalNumColIndex]).trim();
+                    sheetRowNum = parseInt(rowNumStr, 10);
+                    if (isNaN(sheetRowNum)) {
+                        console.error(`Invalid numeric value found in '№' column (index ${originalNumColIndex}) for display row ${displayRowIndex}: '${rowData[originalNumColIndex]}'`);
+                        sheetRowNum = -1;
+                    } else {
+                        sheetRowNum += 2;
+                    }
+                } else if (originalNumColIndex === -1) {
+                } else {
+                     console.warn(`Row data for display row ${displayRowIndex} doesn't contain '№' column index ${originalNumColIndex}.`);
+                }
+
+                selectedIndices.forEach(originalColIndex => {
+                     const td = document.createElement('td');
+                     const colLetter = getColLetter(originalColIndex);
+
+                     let a1Notation = 'invalid-cell-a1';
+                     let cellId = `cell-display-${displayRowIndex}-col-${originalColIndex}`;
+                     let noteKey = 'invalid-note-key';
+
+                     if (sheetRowNum !== -1) {
+                         a1Notation = `${currentSheetName}!${colLetter}${sheetRowNum}`;
+                         cellId = `cell-${sheetRowNum}-${originalColIndex}`;
+                         noteKey = a1Notation;
+                     } else {
+                         td.style.cursor = 'not-allowed';
+                     }
+
+                     td.id = cellId;
+                     td.classList.add('editable-cell');
+
+                     const cellValue = (originalColIndex < rowData.length) ? rowData[originalColIndex] : '';
+                     const displayValue = cellValue !== undefined && cellValue !== null ? String(cellValue) : '';
+
+                     if (fetchedNotes[noteKey]) {
+                         td.classList.add('has-note');
+                     }
+
+                     td.addEventListener('click', () => {
+                         if (sheetRowNum !== -1) {
+                             showNoteEditor(td, a1Notation);
+                         } else {
+                             console.error("Cannot edit note for this cell: Original sheet row number could not be determined (check '№' column).");
+                             alert("Cannot edit note: Row number missing or invalid.");
+                         }
+                     });
+
+                     if (isUrl(displayValue)) {
+                        const link = document.createElement('a');
+                        link.href = displayValue;
+                        link.target = '_blank';
+                        link.rel = 'noopener noreferrer';
+                        const img = document.createElement('img');
+                        img.src = '/static/link_icon.png';
+                        img.alt = 'Link';
+                        img.classList.add('link-icon');
+                        link.appendChild(img);
+                        td.appendChild(link);
+                     } else {
+                         td.textContent = displayValue;
+                     }
+                     row.appendChild(td);
+                });
+                tbody.appendChild(row);
+            });
+
+            table.appendChild(thead);
+            table.appendChild(tbody);
+            tableContainer.appendChild(table);
+        }
+
+        function toggleColumnSettings() {
+            const isHidden = columnSelectorDiv.style.display === 'none';
+            columnSelectorDiv.style.display = isHidden ? 'block' : 'none';
+            columnSettingsToggle.textContent = isHidden ? 'Column Settings ▲' : 'Column Settings ▼';
+        }
+
+        function applyPreset(event) {
+            const selectedPreset = event.target.value;
+            if (!selectedPreset) return;
+
+            const checkboxes = columnCheckboxesDiv.querySelectorAll('input[type="checkbox"]');
+            let defaultHeaders = [
+                '№', 'ФИО',
+                'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L',
+                '∑',
+                '(Column T)'
+            ];
+
+            checkboxes.forEach(cb => {
+                if (selectedPreset === 'all') {
+                    cb.checked = true;
+                } else if (selectedPreset === 'default') {
+                    cb.checked = defaultHeaders.includes(cb.value);
+                }
+            });
+
+            applyColumnFilter();
+        }
+
+        function showNoteEditor(cellElement, a1Notation) {
+            hideNoteEditor();
+            console.log(`Editing note for cell: ${a1Notation}`);
+
+            noteEditorA1.value = a1Notation;
+            noteEditorCellId.value = cellElement.id;
+
+            noteEditorText.value = fetchedNotes[a1Notation] || '';
+
+            const rect = cellElement.getBoundingClientRect();
+            noteEditorPopup.style.left = `${window.scrollX + rect.left}px`;
+            noteEditorPopup.style.top = `${window.scrollY + rect.bottom + 5}px`;
+            noteEditorPopup.style.display = 'block';
+            noteEditorText.focus();
+        }
+
+        function hideNoteEditor() {
+            noteEditorPopup.style.display = 'none';
+            noteEditorText.value = '';
+            noteEditorA1.value = '';
+            noteEditorCellId.value = '';
+        }
+
+        async function saveNote() {
+            const a1Notation = noteEditorA1.value;
+            const noteText = noteEditorText.value.trim();
+            const cellId = noteEditorCellId.value;
+
+            if (!a1Notation || !currentSpreadsheetId || cellId === '') {
+                console.error("Cannot save note: Missing context (A1/ID/CellId).");
+                hideNoteEditor();
+                return;
+            }
+
+            console.log(`Saving note via API for ID: ${currentSpreadsheetId}, A1: ${a1Notation}`);
+            saveNoteBtn.disabled = true;
+            cancelNoteBtn.disabled = true;
+
+            try {
+                const response = await fetch('/save-note', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        id: currentSpreadsheetId,
+                        a1: a1Notation,
+                        note: noteText
+                    }),
+                });
+
+                const result = await response.json();
+
+                if (!response.ok) {
+                    const errorMsg = result.error || `HTTP Error: ${response.status}`;
+                    throw new Error(errorMsg);
+                }
+
+                if (result.error) {
+                    throw new Error(result.error);
+                }
+
+                console.log("Save successful:", result);
+                if (noteText) {
+                    fetchedNotes[a1Notation] = noteText;
+                } else {
+                    delete fetchedNotes[a1Notation];
+                }
+                const cellElement = document.getElementById(cellId);
+                if (cellElement) {
+                    if (noteText) {
+                        cellElement.classList.add('has-note');
+                    } else {
+                        cellElement.classList.remove('has-note');
+                    }
+                }
+                hideNoteEditor();
+
+            } catch (error) {
+                console.error("Error saving note:", error);
+                alert(`Failed to save note: ${error.message}`);
+            } finally {
+                 saveNoteBtn.disabled = false;
+                 cancelNoteBtn.disabled = false;
+            }
+        }
+
+        function getColLetter(colIndexZeroBased) {
+            let letter = '';
+            while (colIndexZeroBased >= 0) {
+                letter = String.fromCharCode(65 + (colIndexZeroBased % 26)) + letter;
+                colIndexZeroBased = Math.floor(colIndexZeroBased / 26) - 1;
+            }
+            return letter;
+        }
+
+    </script>
+
+</body>
+</html> 
