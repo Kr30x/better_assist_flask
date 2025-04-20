@@ -49,18 +49,37 @@ def get_col_letter(col_index_zero_based):
 
 # --- Authentication Helper ---
 def get_credentials():
-    """Loads service account credentials."""
-    try:
-        creds = service_account.Credentials.from_service_account_file(
-            SERVICE_ACCOUNT_FILE, scopes=SCOPES)
-        logging.info("Service account credentials loaded successfully.")
-        return creds
-    except FileNotFoundError:
-        logging.error(f"CRITICAL: Service account file not found at {SERVICE_ACCOUNT_FILE}")
-        return None
-    except Exception as e:
-        logging.error(f"CRITICAL: Error loading service account credentials: {e}", exc_info=True)
-        return None
+    """Loads service account credentials from ENV var or file."""
+    creds = None
+    google_credentials_json_str = os.getenv('GOOGLE_CREDENTIALS_JSON')
+
+    if google_credentials_json_str:
+        logging.info("Loading credentials from GOOGLE_CREDENTIALS_JSON env var.")
+        try:
+            # Parse the JSON string from the environment variable
+            credentials_info = json.loads(google_credentials_json_str)
+            creds = service_account.Credentials.from_service_account_info(
+                credentials_info, scopes=SCOPES)
+            logging.info("Credentials loaded successfully from env var.")
+        except json.JSONDecodeError:
+            logging.error("CRITICAL: Failed to parse GOOGLE_CREDENTIALS_JSON env var.")
+            return None
+        except Exception as e:
+            logging.error(f"CRITICAL: Error loading credentials from env var info: {e}", exc_info=True)
+            return None
+    else:
+        logging.info(f"GOOGLE_CREDENTIALS_JSON not set. Attempting to load from file: {SERVICE_ACCOUNT_FILE}")
+        try:
+            creds = service_account.Credentials.from_service_account_file(
+                SERVICE_ACCOUNT_FILE, scopes=SCOPES)
+            logging.info("Credentials loaded successfully from file.")
+        except FileNotFoundError:
+            logging.error(f"CRITICAL: Service account file not found at {SERVICE_ACCOUNT_FILE}. Set GOOGLE_CREDENTIALS_JSON env var for Vercel.")
+            return None
+        except Exception as e:
+            logging.error(f"CRITICAL: Error loading credentials from file: {e}", exc_info=True)
+            return None
+    return creds
 # --- End Auth Helper ---
 
 def get_sheet_data(spreadsheet_id, range_name):

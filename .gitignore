@@ -1,2 +1,7 @@
-.env
 credentials.json
+.env
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.vercel
