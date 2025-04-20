@@ -93,7 +93,6 @@
         <button id="loadDataBtn">Load Spreadsheet Data</button>
     </div>
 
-    <!-- Collapsible Section -->
     <div id="columnSettingsArea">
         <button id="columnSettingsToggle">Column Settings ▼</button>
         <label for="columnPresetSelect" style="font-weight: bold;">Column Preset:</label>
@@ -112,7 +111,6 @@
             <button id="applyColsBtn">Apply Columns</button>
         </div>
     </div>
-    <!-- End Collapsible Section -->
 
     <div id="loadingMessage">Loading data... Please wait.</div>
     <div id="errorMessage"></div>
@@ -120,7 +118,6 @@
         <!-- Table will be inserted here by JavaScript -->
     </div>
 
-    <!-- Note Editor Popup -->
     <div id="noteEditorPopup">
         <label for="noteEditorText" style="display: block; margin-bottom: 5px; font-weight: bold;">Edit Note:</label>
         <textarea id="noteEditorText" rows="4" cols="30"></textarea><br>
@@ -129,7 +126,6 @@
         <input type="hidden" id="noteEditorA1">
         <input type="hidden" id="noteEditorCellId">
     </div>
-    <!-- End Note Editor Popup -->
 
     <script>
         const sheetUrlInput = document.getElementById('sheetUrl');
@@ -161,16 +157,75 @@
         let filteredRows = [];
         let fetchedNotes = {};
         let sumColumnIndex = -1;
-        hideZeroSumCheckbox.checked = false;
 
+        const STORAGE_KEY_URL = 'sheetEditor_url';
+        const STORAGE_KEY_SHEET = 'sheetEditor_sheetName';
+        const STORAGE_KEY_START_ROW = 'sheetEditor_startRow';
+        const STORAGE_KEY_END_ROW = 'sheetEditor_endRow';
+        const STORAGE_KEY_PRESET = 'sheetEditor_preset';
+        const STORAGE_KEY_HIDE_ZERO = 'sheetEditor_hideZero';
+
+        document.addEventListener('DOMContentLoaded', restoreState);
         fetchSheetsButton.addEventListener('click', fetchSheetNames);
         loadButton.addEventListener('click', fetchData);
         applyColsButton.addEventListener('click', applyColumnFilter);
         columnSettingsToggle.addEventListener('click', toggleColumnSettings);
         columnPresetSelect.addEventListener('change', applyPreset);
-        hideZeroSumCheckbox.addEventListener('change', applyColumnFilter);
+        hideZeroSumCheckbox.addEventListener('change', () => {
+            saveState();
+            applyColumnFilter();
+        });
         saveNoteBtn.addEventListener('click', saveNote);
         cancelNoteBtn.addEventListener('click', hideNoteEditor);
+
+        function saveState() {
+            try {
+                sessionStorage.setItem(STORAGE_KEY_URL, sheetUrlInput.value);
+                sessionStorage.setItem(STORAGE_KEY_SHEET, sheetNameSelect.value);
+                sessionStorage.setItem(STORAGE_KEY_START_ROW, startRowInput.value);
+                sessionStorage.setItem(STORAGE_KEY_END_ROW, endRowInput.value);
+                sessionStorage.setItem(STORAGE_KEY_PRESET, columnPresetSelect.value);
+                sessionStorage.setItem(STORAGE_KEY_HIDE_ZERO, hideZeroSumCheckbox.checked);
+                console.log("State saved to sessionStorage.");
+            } catch (e) {
+                console.error("Error saving state to sessionStorage:", e);
+            }
+        }
+
+        function restoreState() {
+            console.log("Attempting to restore state from sessionStorage.");
+            try {
+                const savedUrl = sessionStorage.getItem(STORAGE_KEY_URL);
+                const savedStartRow = sessionStorage.getItem(STORAGE_KEY_START_ROW);
+                const savedEndRow = sessionStorage.getItem(STORAGE_KEY_END_ROW);
+                const savedPreset = sessionStorage.getItem(STORAGE_KEY_PRESET);
+                const savedHideZero = sessionStorage.getItem(STORAGE_KEY_HIDE_ZERO);
+
+                if (savedUrl) {
+                    sheetUrlInput.value = savedUrl;
+                    fetchSheetNames();
+                } else {
+                    sheetUrlInput.value = 'https://docs.google.com/spreadsheets/d/1Ajsa7Ve9C725CFESsfWPFS1cfcorSlBpQXbsUMN-aOE/edit';
+                }
+                startRowInput.value = savedStartRow || '';
+                endRowInput.value = savedEndRow || '';
+
+                if (savedPreset) {
+                    columnPresetSelect.value = savedPreset;
+                }
+
+                hideZeroSumCheckbox.checked = (savedHideZero === 'true');
+
+            } catch (e) {
+                console.error("Error restoring state from sessionStorage:", e);
+            }
+        }
+
+        function toggleColumnSettings() {
+            const isHidden = columnSelectorDiv.style.display === 'none';
+            columnSelectorDiv.style.display = isHidden ? 'block' : 'none';
+            columnSettingsToggle.textContent = isHidden ? 'Column Settings ▲' : 'Column Settings ▼';
+        }
 
         function getSpreadsheetIdFromUrl(url) {
             const match = url.match(/\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/);
@@ -179,8 +234,103 @@
 
         function isUrl(str) {
             if (typeof str !== 'string') return false;
-            // Basic check for http:// or https:// prefix
             return str.trim().startsWith('http://') || str.trim().startsWith('https://');
+        }
+
+        function getColLetter(colIndexZeroBased) {
+            let letter = '';
+            while (colIndexZeroBased >= 0) {
+                letter = String.fromCharCode(65 + (colIndexZeroBased % 26)) + letter;
+                colIndexZeroBased = Math.floor(colIndexZeroBased / 26) - 1;
+            }
+            return letter;
+        }
+
+        function showNoteEditor(cellElement, a1Notation) {
+            hideNoteEditor();
+            console.log(`Editing note for cell: ${a1Notation}`);
+
+            noteEditorA1.value = a1Notation;
+            noteEditorCellId.value = cellElement.id;
+
+            noteEditorText.value = fetchedNotes[a1Notation] || '';
+
+            const rect = cellElement.getBoundingClientRect();
+            noteEditorPopup.style.left = `${window.scrollX + rect.left}px`;
+            noteEditorPopup.style.top = `${window.scrollY + rect.bottom + 5}px`;
+            noteEditorPopup.style.display = 'block';
+            noteEditorText.focus();
+        }
+
+        function hideNoteEditor() {
+            noteEditorPopup.style.display = 'none';
+            noteEditorText.value = '';
+            noteEditorA1.value = '';
+            noteEditorCellId.value = '';
+        }
+
+        async function saveNote() {
+            const a1Notation = noteEditorA1.value;
+            const noteText = noteEditorText.value.trim();
+            const cellId = noteEditorCellId.value;
+
+            if (!a1Notation || !currentSpreadsheetId || cellId === '') {
+                console.error("Cannot save note: Missing context (A1/ID/CellId).");
+                hideNoteEditor();
+                return;
+            }
+
+            console.log(`Saving note via API for ID: ${currentSpreadsheetId}, A1: ${a1Notation}`);
+            saveNoteBtn.disabled = true;
+            cancelNoteBtn.disabled = true;
+
+            try {
+                const response = await fetch('/save-note', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        id: currentSpreadsheetId,
+                        a1: a1Notation,
+                        note: noteText
+                    }),
+                });
+
+                const result = await response.json();
+
+                if (!response.ok) {
+                    const errorMsg = result.error || `HTTP Error: ${response.status}`;
+                    throw new Error(errorMsg);
+                }
+
+                if (result.error) {
+                    throw new Error(result.error);
+                }
+
+                console.log("Save successful:", result);
+                if (noteText) {
+                    fetchedNotes[a1Notation] = noteText;
+                } else {
+                    delete fetchedNotes[a1Notation];
+                }
+                const cellElement = document.getElementById(cellId);
+                if (cellElement) {
+                    if (noteText) {
+                        cellElement.classList.add('has-note');
+                    } else {
+                        cellElement.classList.remove('has-note');
+                    }
+                }
+                hideNoteEditor();
+
+            } catch (error) {
+                console.error("Error saving note:", error);
+                alert(`Failed to save note: ${error.message}`);
+            } finally {
+                 saveNoteBtn.disabled = false;
+                 cancelNoteBtn.disabled = false;
+            }
         }
 
         async function fetchSheetNames() {
@@ -222,9 +372,15 @@
                         option.textContent = name;
                         sheetNameSelect.appendChild(option);
                     });
-                    if (sheetNameSelect.options.length > 0) {
+
+                    const savedSheetName = sessionStorage.getItem(STORAGE_KEY_SHEET);
+                    if (savedSheetName && sheetNameSelect.querySelector(`option[value="${savedSheetName}"]`)) {
+                        sheetNameSelect.value = savedSheetName;
+                        console.log(`Restored selected sheet: ${savedSheetName}`);
+                    } else if (sheetNameSelect.options.length > 0) {
                         sheetNameSelect.selectedIndex = 0;
                     }
+
                     sheetLoadStatus.textContent = 'Loaded!';
                     sheetLoadStatus.style.color = 'green';
                 } else {
@@ -245,6 +401,8 @@
         }
 
         async function fetchData() {
+            saveState();
+
             const sheetUrl = sheetUrlInput.value.trim();
             const sheetName = sheetNameSelect.value;
             const startRow = startRowInput.value.trim();
@@ -292,8 +450,6 @@
             columnSelectorDiv.style.display = 'none';
             columnSettingsToggle.textContent = 'Column Settings ▼';
             columnCheckboxesDiv.innerHTML = '';
-            columnPresetSelect.value = '';
-            hideZeroSumCheckbox.checked = false;
             fetchedNotes = {};
             sumColumnIndex = -1;
             hideNoteEditor();
@@ -329,13 +485,20 @@
 
                 if (fullHeader.length > 0) {
                     populateColumnSelector(fullHeader);
-                    columnSelectorDiv.style.display = 'block';
                     applyColsButton.disabled = false;
                     columnSettingsToggle.disabled = false;
                     columnPresetSelect.disabled = false;
                     hideZeroSumCheckbox.disabled = (sumColumnIndex === -1);
-                    columnPresetSelect.value = 'default';
-                    applyPreset({ target: columnPresetSelect });
+
+                    if (columnPresetSelect.value) {
+                        console.log(`Applying preset from dropdown: ${columnPresetSelect.value}`);
+                        applyPreset({ target: columnPresetSelect });
+                    } else {
+                        console.log("No preset selected/restored, applying 'default'.");
+                        columnPresetSelect.value = 'default';
+                        applyPreset({ target: columnPresetSelect });
+                    }
+
                 } else {
                      tableContainer.innerHTML = '<p>No header found. Cannot display data or column selector.</p>';
                      columnPresetSelect.disabled = true;
@@ -383,6 +546,31 @@
                 label.appendChild(document.createTextNode(labelText));
                 columnCheckboxesDiv.appendChild(label);
             });
+        }
+
+        function applyPreset(event) {
+            const selectedPreset = event.target.value;
+            if (!selectedPreset) return;
+            console.log(`Applying preset: ${selectedPreset}`);
+
+            const checkboxes = columnCheckboxesDiv.querySelectorAll('input[type="checkbox"]');
+            let defaultHeaders = [
+                '№', 'ФИО',
+                'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L',
+                '∑',
+                '(Column T)'
+            ];
+
+            checkboxes.forEach(cb => {
+                if (selectedPreset === 'all') {
+                    cb.checked = true;
+                } else if (selectedPreset === 'default') {
+                    cb.checked = defaultHeaders.includes(cb.value);
+                }
+            });
+
+            saveState();
+            applyColumnFilter();
         }
 
         function applyColumnFilter() {
@@ -545,132 +733,7 @@
             tableContainer.appendChild(table);
         }
 
-        function toggleColumnSettings() {
-            const isHidden = columnSelectorDiv.style.display === 'none';
-            columnSelectorDiv.style.display = isHidden ? 'block' : 'none';
-            columnSettingsToggle.textContent = isHidden ? 'Column Settings ▲' : 'Column Settings ▼';
-        }
-
-        function applyPreset(event) {
-            const selectedPreset = event.target.value;
-            if (!selectedPreset) return;
-
-            const checkboxes = columnCheckboxesDiv.querySelectorAll('input[type="checkbox"]');
-            let defaultHeaders = [
-                '№', 'ФИО',
-                'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L',
-                '∑',
-                '(Column T)'
-            ];
-
-            checkboxes.forEach(cb => {
-                if (selectedPreset === 'all') {
-                    cb.checked = true;
-                } else if (selectedPreset === 'default') {
-                    cb.checked = defaultHeaders.includes(cb.value);
-                }
-            });
-
-            applyColumnFilter();
-        }
-
-        function showNoteEditor(cellElement, a1Notation) {
-            hideNoteEditor();
-            console.log(`Editing note for cell: ${a1Notation}`);
-
-            noteEditorA1.value = a1Notation;
-            noteEditorCellId.value = cellElement.id;
-
-            noteEditorText.value = fetchedNotes[a1Notation] || '';
-
-            const rect = cellElement.getBoundingClientRect();
-            noteEditorPopup.style.left = `${window.scrollX + rect.left}px`;
-            noteEditorPopup.style.top = `${window.scrollY + rect.bottom + 5}px`;
-            noteEditorPopup.style.display = 'block';
-            noteEditorText.focus();
-        }
-
-        function hideNoteEditor() {
-            noteEditorPopup.style.display = 'none';
-            noteEditorText.value = '';
-            noteEditorA1.value = '';
-            noteEditorCellId.value = '';
-        }
-
-        async function saveNote() {
-            const a1Notation = noteEditorA1.value;
-            const noteText = noteEditorText.value.trim();
-            const cellId = noteEditorCellId.value;
-
-            if (!a1Notation || !currentSpreadsheetId || cellId === '') {
-                console.error("Cannot save note: Missing context (A1/ID/CellId).");
-                hideNoteEditor();
-                return;
-            }
-
-            console.log(`Saving note via API for ID: ${currentSpreadsheetId}, A1: ${a1Notation}`);
-            saveNoteBtn.disabled = true;
-            cancelNoteBtn.disabled = true;
-
-            try {
-                const response = await fetch('/save-note', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                    },
-                    body: JSON.stringify({
-                        id: currentSpreadsheetId,
-                        a1: a1Notation,
-                        note: noteText
-                    }),
-                });
-
-                const result = await response.json();
-
-                if (!response.ok) {
-                    const errorMsg = result.error || `HTTP Error: ${response.status}`;
-                    throw new Error(errorMsg);
-                }
-
-                if (result.error) {
-                    throw new Error(result.error);
-                }
-
-                console.log("Save successful:", result);
-                if (noteText) {
-                    fetchedNotes[a1Notation] = noteText;
-                } else {
-                    delete fetchedNotes[a1Notation];
-                }
-                const cellElement = document.getElementById(cellId);
-                if (cellElement) {
-                    if (noteText) {
-                        cellElement.classList.add('has-note');
-                    } else {
-                        cellElement.classList.remove('has-note');
-                    }
-                }
-                hideNoteEditor();
-
-            } catch (error) {
-                console.error("Error saving note:", error);
-                alert(`Failed to save note: ${error.message}`);
-            } finally {
-                 saveNoteBtn.disabled = false;
-                 cancelNoteBtn.disabled = false;
-            }
-        }
-
-        function getColLetter(colIndexZeroBased) {
-            let letter = '';
-            while (colIndexZeroBased >= 0) {
-                letter = String.fromCharCode(65 + (colIndexZeroBased % 26)) + letter;
-                colIndexZeroBased = Math.floor(colIndexZeroBased / 26) - 1;
-            }
-            return letter;
-        }
-
     </script>
 
 </body>
-</html> 
+</html>

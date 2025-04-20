@@ -1,11 +1,12 @@
 import os
 import logging # Import logging
-from flask import Flask, render_template, jsonify, request # Import request
+from flask import Flask, render_template, jsonify, request, session # Import session
 from google.oauth2 import service_account # Use service_account credentials
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 from dotenv import load_dotenv # Import load_dotenv
 import json # Import json for parsing errors
+from waitress import serve # Import serve
 
 load_dotenv() # Load environment variables from .env file
 
@@ -28,6 +29,13 @@ DEFAULT_MAX_ROWS = 500 # Fetch up to 500 rows initially
 # --- End Configuration ---
 
 app = Flask(__name__)
+
+# --- IMPORTANT: Set a Secret Key for Sessions ---
+# In production, use a strong, random key set via environment variable
+app.secret_key = os.getenv('FLASK_SECRET_KEY', 'dev-secret-key-replace-me-in-prod')
+if app.secret_key == 'dev-secret-key-replace-me-in-prod':
+    logging.warning("Using default FLASK_SECRET_KEY. Set a proper secret key in your environment for production!")
+# --- End Secret Key ---
 
 # --- Utility to get column letter ---
 def get_col_letter(col_index_zero_based):
@@ -424,7 +432,11 @@ def save_note_route():
 # --- End Save Note Endpoint ---
 
 if __name__ == '__main__':
-    # Make sure the templates directory exists
-    if not os.path.exists('templates'):
-        os.makedirs('templates')
-    app.run(debug=True) 
+    # No longer need the templates check here, focus on serving
+    # if not os.path.exists('templates'):
+    #     os.makedirs('templates')
+    port = 3000
+    print(f"Starting Waitress server on http://0.0.0.0:{port}")
+    # Use waitress.serve instead of app.run()
+    serve(app, host='0.0.0.0', port=port)
+    # app.run(debug=True) # Remove flask development server 
