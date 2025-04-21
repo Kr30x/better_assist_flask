@@ -450,6 +450,60 @@ def save_note_route():
         return jsonify({"success": True, "a1": a1_notation, "note": note_text})
 # --- End Save Note Endpoint ---
 
+# --- New Endpoint to Ban Cell (Set Value to 0) ---
+@app.route('/ban-cell', methods=['POST'])
+def ban_cell_route():
+    data = request.json
+    spreadsheet_id = data.get('id')
+    a1_notation = data.get('a1') # e.g., "Sheet1!D5"
+
+    logging.info(f"Request: /ban-cell | ID: '{spreadsheet_id}', A1: '{a1_notation}'")
+
+    if not spreadsheet_id or not a1_notation:
+        return jsonify({"error": "Missing required parameters (id, a1)."}), 400
+
+    creds = get_credentials()
+    if not creds:
+        return jsonify({"error": "Server authentication error."}), 500
+
+    error_msg = None
+    try:
+        service = build('sheets', 'v4', credentials=creds)
+
+        # Define the request body for values.update
+        # We set the value to the string "0"
+        body = {
+            'values': [['0']]
+        }
+
+        logging.info(f"Executing values.update to set cell {a1_notation} to '0'")
+        result = service.spreadsheets().values().update(
+            spreadsheetId=spreadsheet_id,
+            range=a1_notation, # values.update works directly with A1 range
+            valueInputOption='USER_ENTERED', # Interpret '0' as a number if possible by Sheets
+            body=body
+        ).execute()
+
+        logging.info(f"Successfully set cell {a1_notation} to '0'. Response: {result}")
+
+    except HttpError as err:
+        logging.error(f"API error banning cell: {err}", exc_info=True)
+        error_msg = f"API Error ({err.resp.status}): Could not update cell value. Check permissions and cell reference."
+        # Add more specific checks if needed (e.g., 400 for invalid range)
+        if err.resp.status == 400:
+            error_msg += " (Possible invalid cell reference)"
+
+    except Exception as e:
+        logging.error(f"Unexpected error banning cell: {e}", exc_info=True)
+        error_msg = "Unexpected server error updating cell value."
+
+    if error_msg:
+        return jsonify({"error": error_msg}), 500
+    else:
+        # Return success along with which cell was updated
+        return jsonify({"success": True, "a1": a1_notation, "newValue": "0"})
+# --- End Ban Cell Endpoint ---
+
 if __name__ == '__main__':
     # No longer need the templates check here, focus on serving
     # if not os.path.exists('templates'):

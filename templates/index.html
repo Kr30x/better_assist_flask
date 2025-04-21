@@ -45,6 +45,8 @@
         td.editable-cell:hover { background-color: #e8f0fe; cursor: pointer; }
         td.has-note { background-color: #d9ead3; /* Light green */ }
         td.has-note:hover { background-color: #c8e0bd; /* Darker green on hover */ }
+        td.zero-with-note { background-color: #f4cccc; /* Light red */ }
+        td.zero-with-note:hover { background-color: #ea9999; /* Darker red on hover */ }
         #noteEditorPopup {
             display: none;
             position: absolute;
@@ -64,6 +66,7 @@
         #noteEditorPopup button {
             margin-right: 5px;
             padding: 5px 10px;
+            margin-top: 5px; /* Add some top margin */
         }
     </style>
 </head>
@@ -121,7 +124,8 @@
     <div id="noteEditorPopup">
         <label for="noteEditorText" style="display: block; margin-bottom: 5px; font-weight: bold;">Edit Note:</label>
         <textarea id="noteEditorText" rows="4" cols="30"></textarea><br>
-        <button id="saveNoteBtn">Save</button>
+        <button id="saveNoteBtn">Save Note</button>
+        <button id="banCellBtn" type="button" style="color: red;">Ban 🚩</button>
         <button id="cancelNoteBtn" type="button">Cancel</button>
         <input type="hidden" id="noteEditorA1">
         <input type="hidden" id="noteEditorCellId">
@@ -147,6 +151,7 @@
         const noteEditorPopup = document.getElementById('noteEditorPopup');
         const noteEditorText = document.getElementById('noteEditorText');
         const saveNoteBtn = document.getElementById('saveNoteBtn');
+        const banCellBtn = document.getElementById('banCellBtn');
         const cancelNoteBtn = document.getElementById('cancelNoteBtn');
         const noteEditorA1 = document.getElementById('noteEditorA1');
         const noteEditorCellId = document.getElementById('noteEditorCellId');
@@ -176,6 +181,7 @@
             applyColumnFilter();
         });
         saveNoteBtn.addEventListener('click', saveNote);
+        banCellBtn.addEventListener('click', banCell);
         cancelNoteBtn.addEventListener('click', hideNoteEditor);
 
         function saveState() {
@@ -282,6 +288,7 @@
 
             console.log(`Saving note via API for ID: ${currentSpreadsheetId}, A1: ${a1Notation}`);
             saveNoteBtn.disabled = true;
+            banCellBtn.disabled = true;
             cancelNoteBtn.disabled = true;
 
             try {
@@ -329,6 +336,73 @@
                 alert(`Failed to save note: ${error.message}`);
             } finally {
                  saveNoteBtn.disabled = false;
+                 banCellBtn.disabled = false;
+                 cancelNoteBtn.disabled = false;
+            }
+        }
+
+        async function banCell() {
+            const a1Notation = noteEditorA1.value;
+            const cellId = noteEditorCellId.value;
+
+            if (!a1Notation || !currentSpreadsheetId || cellId === '') {
+                console.error("Cannot ban cell: Missing context (A1/ID/CellId).");
+                hideNoteEditor();
+                return;
+            }
+
+            if (!confirm(`Are you sure you want to set cell ${a1Notation} to 0? This cannot be easily undone from here.`)) {
+                return;
+            }
+
+            console.log(`Banning cell via API for ID: ${currentSpreadsheetId}, A1: ${a1Notation}`);
+            saveNoteBtn.disabled = true;
+            banCellBtn.disabled = true;
+            cancelNoteBtn.disabled = true;
+
+            try {
+                const response = await fetch('/ban-cell', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        id: currentSpreadsheetId,
+                        a1: a1Notation
+                    }),
+                });
+
+                const result = await response.json();
+
+                if (!response.ok) {
+                    const errorMsg = result.error || `HTTP Error: ${response.status}`;
+                    throw new Error(errorMsg);
+                }
+                if (result.error) {
+                    throw new Error(result.error);
+                }
+
+                console.log("Ban successful:", result);
+                const cellElement = document.getElementById(cellId);
+                if (cellElement) {
+                    while (cellElement.firstChild) {
+                        cellElement.removeChild(cellElement.firstChild);
+                    }
+                    cellElement.textContent = '0';
+
+                    if (fetchedNotes[a1Notation]) {
+                        delete fetchedNotes[a1Notation];
+                        cellElement.classList.remove('has-note');
+                    }
+                }
+                hideNoteEditor();
+
+            } catch (error) {
+                console.error("Error banning cell:", error);
+                alert(`Failed to ban cell: ${error.message}`);
+            } finally {
+                 saveNoteBtn.disabled = false;
+                 banCellBtn.disabled = false;
                  cancelNoteBtn.disabled = false;
             }
         }
@@ -695,11 +769,19 @@
 
                      const cellValue = (originalColIndex < rowData.length) ? rowData[originalColIndex] : '';
                      const displayValue = cellValue !== undefined && cellValue !== null ? String(cellValue) : '';
+                     const hasNote = fetchedNotes[noteKey];
+                     const isZero = displayValue === '0';
 
-                     if (fetchedNotes[noteKey]) {
+                     // Apply styling based on conditions
+                     td.classList.remove('has-note', 'zero-with-note'); // Clear previous styles first
+                     if (isZero && hasNote) {
+                         td.classList.add('zero-with-note');
+                     } else if (hasNote) {
                          td.classList.add('has-note');
                      }
+                     // No special class if just zero or just empty or other value without note
 
+                     // Add click listener to show editor
                      td.addEventListener('click', () => {
                          if (sheetRowNum !== -1) {
                              showNoteEditor(td, a1Notation);
