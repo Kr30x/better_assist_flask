@@ -101,7 +101,8 @@
         <label for="columnPresetSelect" style="font-weight: bold;">Column Preset:</label>
         <select id="columnPresetSelect">
             <option value="" selected>-- Select Preset --</option>
-            <option value="default">Default</option>
+            <option value="hw1">Homework 1 (F-S)</option>
+            <option value="hw2">Homework 2 (U-AA)</option>
             <option value="all">All</option>
         </select>
         <label id="hideZeroSumLabel" style="margin-left: 15px;">
@@ -628,19 +629,49 @@
             console.log(`Applying preset: ${selectedPreset}`);
 
             const checkboxes = columnCheckboxesDiv.querySelectorAll('input[type="checkbox"]');
-            let defaultHeaders = [
-                '№', 'ФИО',
-                'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L',
-                '∑',
-                '(Column T)'
-            ];
+            // Define base columns shown in homework views (No 'Почта')
+            const baseHeaders = ['№', 'ФИО', 'Логин']; // Indices 0, 1, 3 assumed
+
+            // HW1 Columns (Indices 5-18: F-S)
+            const hw1TaskHeaders = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L']; // F-Q (5-16)
+            const hw1SumHeader = '∑'; // R (17)
+            const hw1ResultHeader = 'Итог'; // S (18)
+            const hw1SpecificHeaders = [...hw1TaskHeaders, hw1SumHeader, hw1ResultHeader]; // Headers for indices 5-18
+            // const hw1Headers = [...baseHeaders, ...hw1SpecificHeaders]; // Combined list (for potential future use)
+
+            // HW2 Columns (Indices 20-26: U-AA)
+            const hw2TaskHeaders = ['A', 'B', 'C', 'D', 'E']; // U-Y (20-24)
+            const hw2SumHeader = '∑'; // Z (25)
+            const hw2ResultHeader = 'Итог'; // AA (26)
+            const hw2SpecificHeaders = [...hw2TaskHeaders, hw2SumHeader, hw2ResultHeader]; // Headers for indices 20-26
+            // const hw2Headers = [...baseHeaders, ...hw2SpecificHeaders]; // Combined list (for potential future use)
 
             checkboxes.forEach(cb => {
+                const headerValue = cb.value; // The text value of the checkbox
+                const originalIndex = parseInt(cb.dataset.index, 10);
+                let isChecked = false;
+
                 if (selectedPreset === 'all') {
-                    cb.checked = true;
-                } else if (selectedPreset === 'default') {
-                    cb.checked = defaultHeaders.includes(cb.value);
+                    isChecked = true;
+                } else if (selectedPreset === 'hw1') {
+                    // Check if it's a base header at the correct index
+                    if (baseHeaders.includes(headerValue) && [0, 1, 3].includes(originalIndex)) {
+                        isChecked = true;
+                    // Check if it's an HW1 specific header at the correct index range
+                    } else if (hw1SpecificHeaders.includes(headerValue) && (originalIndex >= 5 && originalIndex <= 18)) {
+                        isChecked = true;
+                    }
+                } else if (selectedPreset === 'hw2') {
+                    // Check if it's a base header at the correct index
+                    if (baseHeaders.includes(headerValue) && [0, 1, 3].includes(originalIndex)) {
+                        isChecked = true;
+                    // Check if it's an HW2 specific header at the correct index range
+                    } else if (hw2SpecificHeaders.includes(headerValue) && (originalIndex >= 20 && originalIndex <= 26)) {
+                        isChecked = true;
+                    }
                 }
+
+                cb.checked = isChecked;
             });
 
             saveState();
@@ -668,12 +699,41 @@
             let rowsToProcess = filteredRows;
             const hideZero = hideZeroSumCheckbox.checked;
 
-            if (hideZero && sumColumnIndex !== -1) {
-                 console.log(`Filtering rows where column ${sumColumnIndex} (∑) is 0.`);
+            // Find the original indices of all VISIBLE '∑' columns
+            const visibleSumIndices = [];
+            selectedIndices.forEach((originalIndex, i) => {
+                const headerValue = selectedHeaders[i]; // Get header corresponding to this selected index
+                // Check if the header is '∑' AND if it exists in the full header at this original index
+                if (headerValue === '∑' && fullHeader[originalIndex] === '∑') {
+                    visibleSumIndices.push(originalIndex);
+                }
+            });
+
+            if (hideZero && visibleSumIndices.length > 0) {
+                 console.log(`Filtering rows where value is 0 for ALL visible ∑ columns (indices: ${visibleSumIndices.join(', ')})`);
                  rowsToProcess = rowsToProcess.filter(row => {
-                     return !(row && row.length > sumColumnIndex && parseFloat(row[sumColumnIndex]) === 0);
+                    if (!row) return true; // Keep empty rows? Or filter them?
+
+                    let allVisibleSumsAreZero = true;
+                    for (const sumIndex of visibleSumIndices) {
+                        if (row.length > sumIndex) {
+                            const value = String(row[sumIndex]).trim();
+                            // Consider it non-zero if it's not empty and not numerically zero
+                            if (value !== '' && parseFloat(value) !== 0) {
+                                allVisibleSumsAreZero = false;
+                                break; // Found a non-zero sum, keep the row
+                            }
+                             // Treat potentially non-numeric values or empty strings as zero for filtering
+                        } else {
+                             // If row doesn't even have the column, treat it as zero for filtering
+                        }
+                    }
+                    // Return false (filter out) only if all visible sums were zero
+                    return !allVisibleSumsAreZero;
                  });
                  console.log(`Rows after filtering: ${rowsToProcess.length}`);
+            } else if (hideZero) {
+                console.log("Hide zero sum checked, but no '∑' columns are currently visible.");
             }
 
             generateFilteredTable(selectedHeaders, selectedIndices, rowsToProcess);
@@ -765,47 +825,57 @@
                      }
 
                      td.id = cellId;
-                     td.classList.add('editable-cell');
+                     
+                      const cellValue = (originalColIndex < rowData.length) ? rowData[originalColIndex] : '';
+                      const displayValue = cellValue !== undefined && cellValue !== null ? String(cellValue) : '';
+                      const hasNote = fetchedNotes[noteKey];
+                      const isZero = displayValue === '0';
+ 
+                      // Apply styling based on conditions (notes/zero)
+                      td.classList.remove('has-note', 'zero-with-note'); // Clear previous styles first
+                      if (isZero && hasNote) {
+                          td.classList.add('zero-with-note');
+                      } else if (hasNote) {
+                          td.classList.add('has-note');
+                      }
+                      // No special class if just zero or just empty or other value without note
 
-                     const cellValue = (originalColIndex < rowData.length) ? rowData[originalColIndex] : '';
-                     const displayValue = cellValue !== undefined && cellValue !== null ? String(cellValue) : '';
-                     const hasNote = fetchedNotes[noteKey];
-                     const isZero = displayValue === '0';
+                      if (isUrl(displayValue)) {
+                         // Create a link with just an icon, no note editor
+                         const link = document.createElement('a');
+                         link.href = displayValue;
+                         link.target = '_blank';
+                         link.rel = 'noopener noreferrer';
 
-                     // Apply styling based on conditions
-                     td.classList.remove('has-note', 'zero-with-note'); // Clear previous styles first
-                     if (isZero && hasNote) {
-                         td.classList.add('zero-with-note');
-                     } else if (hasNote) {
-                         td.classList.add('has-note');
-                     }
-                     // No special class if just zero or just empty or other value without note
+                         // Re-add the link icon
+                         const img = document.createElement('img');
+                         img.src = '/static/link_icon.png';
+                         img.alt = 'Link';
+                         img.classList.add('link-icon');
+                         link.appendChild(img);
 
-                     // Add click listener to show editor
-                     td.addEventListener('click', () => {
-                         if (sheetRowNum !== -1) {
-                             showNoteEditor(td, a1Notation);
-                         } else {
-                             console.error("Cannot edit note for this cell: Original sheet row number could not be determined (check '№' column).");
-                             alert("Cannot edit note: Row number missing or invalid.");
-                         }
-                     });
+                          // Prevent event bubbling to stop any other listeners
+                          link.addEventListener('click', (event) => {
+                              event.stopPropagation();
+                          });
 
-                     if (isUrl(displayValue)) {
-                        const link = document.createElement('a');
-                        link.href = displayValue;
-                        link.target = '_blank';
-                        link.rel = 'noopener noreferrer';
-                        const img = document.createElement('img');
-                        img.src = '/static/link_icon.png';
-                        img.alt = 'Link';
-                        img.classList.add('link-icon');
-                        link.appendChild(img);
-                        td.appendChild(link);
-                     } else {
+                          td.style.padding = '0'; // Remove padding to make link fill entirely
+                          td.appendChild(link);
+                          // Do NOT add 'editable-cell' or the main click listener
+                       } else {
+                         // Regular cell: make it editable and add note editor listener
                          td.textContent = displayValue;
-                     }
-                     row.appendChild(td);
+                         td.classList.add('editable-cell');
+                         td.addEventListener('click', () => {
+                            if (sheetRowNum !== -1) {
+                                showNoteEditor(td, a1Notation);
+                            } else {
+                                console.error("Cannot edit note for this cell: Original sheet row number could not be determined (check '№' column).");
+                                alert("Cannot edit note: Row number missing or invalid.");
+                            }
+                         });
+                      }
+                      row.appendChild(td);
                 });
                 tbody.appendChild(row);
             });
