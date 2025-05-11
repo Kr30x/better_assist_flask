@@ -188,7 +188,7 @@ def load_data():
         return jsonify({"error": "Missing required parameters (id, sheet)."}), 400
 
     # Fetch data including notes using the new function
-    header, all_rows, notes, error_msg = get_sheet_data_with_notes(spreadsheet_id, sheet_name)
+    header, all_rows, notes, data_row_sheet_indices, error_msg = get_sheet_data_with_notes(spreadsheet_id, sheet_name)
 
     if error_msg:
         logging.error(f"Error from get_sheet_data_with_notes: {error_msg}")
@@ -196,6 +196,7 @@ def load_data():
 
     # --- Apply Row Filtering (if applicable) ---
     filtered_rows = [] # Initialize filtered_rows
+    filtered_row_indices = []
     if all_rows and (start_row_num is not None or end_row_num is not None):
         # Adjust to 0-based index for slicing (start_row_num=1 maps to index 0)
         slice_start = (start_row_num - 1) if start_row_num is not None else 0
@@ -207,20 +208,23 @@ def load_data():
 
         if slice_start < slice_end:
             filtered_rows = all_rows[slice_start:slice_end]
+            filtered_row_indices = data_row_sheet_indices[slice_start:slice_end]
             logging.info(f"Applied filter: start_row={start_row_num}, end_row={end_row_num}. Resulting rows: {len(filtered_rows)} (Indices {slice_start}-{slice_end-1})")
         else:
             filtered_rows = []
+            filtered_row_indices = []
             logging.info(f"Applied filter: start_row={start_row_num}, end_row={end_row_num}. No rows selected after bounds check.")
     else:
         # No filtering requested or no data_rows to filter
         filtered_rows = all_rows
+        filtered_row_indices = data_row_sheet_indices
         if all_rows:
             logging.info(f"No row filtering applied. Using all {len(filtered_rows)} data rows.")
     # --- End Filtering ---
 
     # Return PADDED header and the (potentially filtered) rows
     logging.info(f"Returning JSON. Padded header length: {len(header)}, Filtered rows count: {len(filtered_rows)}, Notes count: {len(notes)}")
-    return jsonify({"header": header, "rows": filtered_rows, "notes": notes})
+    return jsonify({"header": header, "rows": filtered_rows, "notes": notes, "data_row_sheet_indices": filtered_row_indices})
 
 @app.route('/get-sheet-names')
 def get_sheet_names():
@@ -260,7 +264,7 @@ def get_sheet_data_with_notes(spreadsheet_id, sheet_name):
     """Fetches sheet data including values and notes using spreadsheets.get."""
     logging.info(f"Fetching data and notes for ID: {spreadsheet_id}, Sheet: {sheet_name}")
     creds = get_credentials()
-    if not creds: return None, None, None, "Server authentication error."
+    if not creds: return None, None, None, None, "Server authentication error."
 
     try:
         service = build('sheets', 'v4', credentials=creds)
@@ -283,7 +287,7 @@ def get_sheet_data_with_notes(spreadsheet_id, sheet_name):
         sheets_data = result.get('sheets', [])
         if not sheets_data or not sheets_data[0].get('data'):
             logging.warning(f"No sheet data found in response for range {range_a1}")
-            return [], {}, {}, None # Return empty header/notes, no error
+            return [], {}, {}, [], None # Return empty header/notes, no error
 
         grid_data = sheets_data[0]['data'][0] # Assuming single range fetch
         row_data = grid_data.get('rowData', [])
@@ -292,6 +296,7 @@ def get_sheet_data_with_notes(spreadsheet_id, sheet_name):
         all_rows_values = []
         notes = {} # Store notes as { "A1_notation": "note text" }
         max_cols = 0
+        data_row_sheet_indices = []  # List of actual sheet row numbers for each data row
 
         # Find max columns based *only* on formattedValue presence first
         # This avoids notes in empty columns creating extra padding later
@@ -326,18 +331,19 @@ def get_sheet_data_with_notes(spreadsheet_id, sheet_name):
             # Add subsequent rows to data (starting from index 2)
             if r_idx >= 2:
                 all_rows_values.append(current_row_values[:max_cols])
+                data_row_sheet_indices.append(sheet_row_num)
 
         logging.info(f"Parsed {len(header)} header columns and {len(all_rows_values)} data rows. Found {len(notes)} notes.")
-        return header, all_rows_values, notes, None # Return header, rows, notes, no error
+        return header, all_rows_values, notes, data_row_sheet_indices, None # Return header, rows, notes, row indices, no error
 
     except HttpError as err:
         logging.error(f"API error getting sheet data/notes: {err}", exc_info=True)
         error_msg = f"API Error ({err.resp.status}): Could not get sheet data. Check permissions, Sheet ID, and Sheet Name."
         # Add more specific error checks if needed
-        return None, None, None, error_msg
+        return None, None, None, None, error_msg
     except Exception as e:
         logging.error(f"Unexpected error getting sheet data/notes: {e}", exc_info=True)
-        return None, None, None, "Unexpected server error getting sheet data."
+        return None, None, None, None, "Unexpected server error getting sheet data."
 # --- End Data Fetching ---
 
 # --- New Endpoint to Save Note ---

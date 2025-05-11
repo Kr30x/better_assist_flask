@@ -98,13 +98,6 @@
 
     <div id="columnSettingsArea">
         <button id="columnSettingsToggle">Column Settings ▼</button>
-        <label for="columnPresetSelect" style="font-weight: bold;">Column Preset:</label>
-        <select id="columnPresetSelect">
-            <option value="" selected>-- Select Preset --</option>
-            <option value="hw1">Homework 1 (F-S)</option>
-            <option value="hw2">Homework 2 (U-AA)</option>
-            <option value="all">All</option>
-        </select>
         <label id="hideZeroSumLabel" style="margin-left: 15px;">
             <input type="checkbox" id="hideZeroSumCheckbox">
             Hide rows with ∑ = 0
@@ -144,7 +137,6 @@
         const errorMessage = document.getElementById('errorMessage');
         const tableContainer = document.getElementById('dataTableContainer');
         const columnSettingsToggle = document.getElementById('columnSettingsToggle');
-        const columnPresetSelect = document.getElementById('columnPresetSelect');
         const hideZeroSumCheckbox = document.getElementById('hideZeroSumCheckbox');
         const columnSelectorDiv = document.getElementById('columnSelectorContainer');
         const columnCheckboxesDiv = document.getElementById('columnCheckboxes');
@@ -163,6 +155,7 @@
         let filteredRows = [];
         let fetchedNotes = {};
         let sumColumnIndex = -1;
+        let dataRowSheetIndices = [];
 
         const STORAGE_KEY_URL = 'sheetEditor_url';
         const STORAGE_KEY_SHEET = 'sheetEditor_sheetName';
@@ -176,7 +169,6 @@
         loadButton.addEventListener('click', fetchData);
         applyColsButton.addEventListener('click', applyColumnFilter);
         columnSettingsToggle.addEventListener('click', toggleColumnSettings);
-        columnPresetSelect.addEventListener('change', applyPreset);
         hideZeroSumCheckbox.addEventListener('change', () => {
             saveState();
             applyColumnFilter();
@@ -527,12 +519,12 @@
             columnCheckboxesDiv.innerHTML = '';
             fetchedNotes = {};
             sumColumnIndex = -1;
+            dataRowSheetIndices = [];
             hideNoteEditor();
             loadingMessage.style.display = 'block';
             loadButton.disabled = true;
             applyColsButton.disabled = true;
             columnSettingsToggle.disabled = true;
-            columnPresetSelect.disabled = true;
             hideZeroSumCheckbox.disabled = true;
 
             try {
@@ -552,6 +544,7 @@
                 fullHeader = data.header || [];
                 filteredRows = data.rows || [];
                 fetchedNotes = data.notes || {};
+                dataRowSheetIndices = data.data_row_sheet_indices || [];
 
                 sumColumnIndex = fullHeader.findIndex(h => h === '∑');
                 if (sumColumnIndex === -1) {
@@ -562,21 +555,13 @@
                     populateColumnSelector(fullHeader);
                     applyColsButton.disabled = false;
                     columnSettingsToggle.disabled = false;
-                    columnPresetSelect.disabled = false;
                     hideZeroSumCheckbox.disabled = (sumColumnIndex === -1);
 
-                    if (columnPresetSelect.value) {
-                        console.log(`Applying preset from dropdown: ${columnPresetSelect.value}`);
-                        applyPreset({ target: columnPresetSelect });
-                    } else {
-                        console.log("No preset selected/restored, applying 'hw2'.");
-                        columnPresetSelect.value = 'hw2';
-                        applyPreset({ target: columnPresetSelect });
-                    }
+                    // Always apply the homework preset (E-S) by default
+                    applyPreset();
 
                 } else {
                      tableContainer.innerHTML = '<p>No header found. Cannot display data or column selector.</p>';
-                     columnPresetSelect.disabled = true;
                      hideZeroSumCheckbox.disabled = true;
                 }
 
@@ -585,7 +570,6 @@
                 errorMessage.textContent = `Error: ${error.message}`;
                 errorMessage.style.display = 'block';
                 columnSettingsToggle.disabled = false;
-                columnPresetSelect.disabled = false;
                  hideZeroSumCheckbox.disabled = true;
             } finally {
                 loadingMessage.style.display = 'none';
@@ -623,58 +607,21 @@
             });
         }
 
-        function applyPreset(event) {
-            const selectedPreset = event.target.value;
-            if (!selectedPreset) return;
-            console.log(`Applying preset: ${selectedPreset}`);
-
+        function applyPreset() {
+            // Only show base columns and HW1 columns (E-S, indices 4-18)
             const checkboxes = columnCheckboxesDiv.querySelectorAll('input[type="checkbox"]');
-            // Define base columns shown in homework views (No 'Почта')
             const baseHeaders = ['№', 'ФИО', 'Логин']; // Indices 0, 1, 3 assumed
-
-            // HW1 Columns (Indices 5-18: F-S)
-            const hw1TaskHeaders = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L']; // F-Q (5-16)
-            const hw1SumHeader = '∑'; // R (17)
-            const hw1ResultHeader = 'Итог'; // S (18)
-            const hw1SpecificHeaders = [...hw1TaskHeaders, hw1SumHeader, hw1ResultHeader]; // Headers for indices 5-18
-            // const hw1Headers = [...baseHeaders, ...hw1SpecificHeaders]; // Combined list (for potential future use)
-
-            // HW2 Columns (Indices 20-26: U-AA)
-            const hw2TaskHeaders = ['A', 'B', 'C', 'D', 'E']; // U-Y (20-24)
-            const hw2SumHeader = '∑'; // Z (25)
-            const hw2ResultHeader = 'Итог'; // AA (26)
-            const hw2SpecificHeaders = [...hw2TaskHeaders, hw2SumHeader, hw2ResultHeader]; // Headers for indices 20-26
-            // const hw2Headers = [...baseHeaders, ...hw2SpecificHeaders]; // Combined list (for potential future use)
-
             checkboxes.forEach(cb => {
-                const headerValue = cb.value; // The text value of the checkbox
+                const headerValue = cb.value;
                 const originalIndex = parseInt(cb.dataset.index, 10);
                 let isChecked = false;
-
-                if (selectedPreset === 'all') {
+                if (baseHeaders.includes(headerValue) && [0, 1, 3].includes(originalIndex)) {
                     isChecked = true;
-                } else if (selectedPreset === 'hw1') {
-                    // Check if it's a base header at the correct index
-                    if (baseHeaders.includes(headerValue) && [0, 1, 3].includes(originalIndex)) {
-                        isChecked = true;
-                    // Check if it's an HW1 specific header at the correct index range
-                    } else if (hw1SpecificHeaders.includes(headerValue) && (originalIndex >= 5 && originalIndex <= 18)) {
-                        isChecked = true;
-                    }
-                } else if (selectedPreset === 'hw2') {
-                    // Check if it's a base header at the correct index
-                    if (baseHeaders.includes(headerValue) && [0, 1, 3].includes(originalIndex)) {
-                        isChecked = true;
-                    // Check if it's an HW2 specific header at the correct index range
-                    } else if (hw2SpecificHeaders.includes(headerValue) && (originalIndex >= 20 && originalIndex <= 26)) {
-                        isChecked = true;
-                    }
+                } else if (originalIndex >= 4 && originalIndex <= 18) {
+                    isChecked = true;
                 }
-
                 cb.checked = isChecked;
             });
-
-            saveState();
             applyColumnFilter();
         }
 
@@ -792,20 +739,10 @@
             rowsToDisplay.forEach((rowData, displayRowIndex) => {
                 const row = document.createElement('tr');
 
+                // Use the actual sheet row number from dataRowSheetIndices
                 let sheetRowNum = -1;
-                let rowNumStr = '';
-                if (originalNumColIndex !== -1 && rowData && rowData.length > originalNumColIndex) {
-                    rowNumStr = String(rowData[originalNumColIndex]).trim();
-                    sheetRowNum = parseInt(rowNumStr, 10);
-                    if (isNaN(sheetRowNum)) {
-                        console.error(`Invalid numeric value found in '№' column (index ${originalNumColIndex}) for display row ${displayRowIndex}: '${rowData[originalNumColIndex]}'`);
-                        sheetRowNum = -1;
-                    } else {
-                        sheetRowNum += 2;
-                    }
-                } else if (originalNumColIndex === -1) {
-                } else {
-                     console.warn(`Row data for display row ${displayRowIndex} doesn't contain '№' column index ${originalNumColIndex}.`);
+                if (dataRowSheetIndices && dataRowSheetIndices.length > displayRowIndex) {
+                    sheetRowNum = dataRowSheetIndices[displayRowIndex];
                 }
 
                 selectedIndices.forEach(originalColIndex => {
