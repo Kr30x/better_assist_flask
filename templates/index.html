@@ -47,16 +47,45 @@
         td.has-note:hover { background-color: #c8e0bd; /* Darker green on hover */ }
         td.zero-with-note { background-color: #f4cccc; /* Light red */ }
         td.zero-with-note:hover { background-color: #ea9999; /* Darker red on hover */ }
+        .selected-cell {
+            background-color: #c6e3fa !important; /* Light blue for selected cells */
+            border: 2px solid #2196F3 !important;
+        }
+        #selectionCounter {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            background-color: #2196F3;
+            color: white;
+            padding: 10px 15px;
+            border-radius: 5px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+            display: none;
+            z-index: 1000;
+            cursor: pointer; /* Make it look clickable */
+            transition: background-color 0.2s;
+        }
+        #selectionCounter:hover {
+            background-color: #1976D2; /* Darker blue on hover */
+        }
         #noteEditorPopup {
             display: none;
-            position: absolute;
+            position: fixed;
             border: 1px solid #666;
             background-color: #f9f9f9;
             padding: 15px;
             z-index: 100;
-            min-width: 250px;
-            box-shadow: 3px 3px 8px rgba(0,0,0,0.2);
+            min-width: 300px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.2);
             border-radius: 4px;
+        }
+        #noteEditorPopup.centered {
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+        }
+        #noteEditorPopup:not(.centered) {
+            position: absolute;
         }
         #noteEditorPopup textarea {
             width: 100%;
@@ -67,6 +96,30 @@
             margin-right: 5px;
             padding: 5px 10px;
             margin-top: 5px; /* Add some top margin */
+        }
+        .progress-container {
+            display: none;
+            margin-top: 10px;
+            padding: 5px 0;
+        }
+        .progress-bar {
+            width: 100%;
+            height: 20px;
+            background-color: #f0f0f0;
+            border-radius: 10px;
+            overflow: hidden;
+        }
+        .progress-fill {
+            height: 100%;
+            background-color: #4CAF50;
+            width: 0%;
+            transition: width 0.3s ease;
+        }
+        .progress-text {
+            text-align: center;
+            margin-top: 5px;
+            font-size: 12px;
+            color: #666;
         }
     </style>
 </head>
@@ -102,6 +155,12 @@
             <input type="checkbox" id="hideZeroSumCheckbox">
             Hide rows with ∑ = 0
         </label>
+        <div style="display: inline-block; margin-left: 15px;">
+            <label for="reviewerFilter" style="margin-right: 5px;">Filter by проверяющий:</label>
+            <select id="reviewerFilter" style="padding: 5px;">
+                <option value="">All</option>
+            </select>
+        </div>
         <div id="columnSelectorContainer">
             <strong>Select Columns to Display:</strong>
             <div id="columnCheckboxes"></div>
@@ -118,12 +177,20 @@
     <div id="noteEditorPopup">
         <label for="noteEditorText" style="display: block; margin-bottom: 5px; font-weight: bold;">Edit Note:</label>
         <textarea id="noteEditorText" rows="4" cols="30"></textarea><br>
+        <div class="progress-container" id="progressContainer">
+            <div class="progress-bar">
+                <div class="progress-fill" id="progressFill"></div>
+            </div>
+            <div class="progress-text" id="progressText">Processing: 0 of 0 cells</div>
+        </div>
         <button id="saveNoteBtn">Save Note</button>
         <button id="banCellBtn" type="button" style="color: red;">Ban 🚩</button>
         <button id="cancelNoteBtn" type="button">Cancel</button>
         <input type="hidden" id="noteEditorA1">
         <input type="hidden" id="noteEditorCellId">
     </div>
+
+    <div id="selectionCounter">Click to add note to <span id="selectedCount">0</span> selected cells</div>
 
     <script>
         const sheetUrlInput = document.getElementById('sheetUrl');
@@ -148,6 +215,7 @@
         const cancelNoteBtn = document.getElementById('cancelNoteBtn');
         const noteEditorA1 = document.getElementById('noteEditorA1');
         const noteEditorCellId = document.getElementById('noteEditorCellId');
+        const reviewerFilter = document.getElementById('reviewerFilter');
 
         let currentSpreadsheetId = '';
         let currentSheetName = '';
@@ -164,6 +232,9 @@
         const STORAGE_KEY_PRESET = 'sheetEditor_preset';
         const STORAGE_KEY_HIDE_ZERO = 'sheetEditor_hideZero';
 
+        let selectedCells = new Set();
+        let isMultiSelectMode = false;
+
         document.addEventListener('DOMContentLoaded', restoreState);
         fetchSheetsButton.addEventListener('click', fetchSheetNames);
         loadButton.addEventListener('click', fetchData);
@@ -173,9 +244,135 @@
             saveState();
             applyColumnFilter();
         });
+        reviewerFilter.addEventListener('change', () => {
+            saveState();
+            applyColumnFilter();
+        });
         saveNoteBtn.addEventListener('click', saveNote);
         banCellBtn.addEventListener('click', banCell);
         cancelNoteBtn.addEventListener('click', hideNoteEditor);
+
+        document.addEventListener('keydown', function(e) {
+            if (e.key === 'Control' || e.key === 'Meta') {
+                isMultiSelectMode = true;
+            }
+        });
+
+        document.addEventListener('keyup', function(e) {
+            if (e.key === 'Control' || e.key === 'Meta') {
+                isMultiSelectMode = false;
+            }
+        });
+
+        function updateSelectionCounter() {
+            const counter = document.getElementById('selectionCounter');
+            const count = document.getElementById('selectedCount');
+            count.textContent = selectedCells.size;
+            counter.style.display = selectedCells.size > 0 ? 'block' : 'none';
+        }
+
+        function toggleCellSelection(td, a1Notation) {
+            if (selectedCells.has(a1Notation)) {
+                selectedCells.delete(a1Notation);
+                td.classList.remove('selected-cell');
+            } else {
+                selectedCells.add(a1Notation);
+                td.classList.add('selected-cell');
+            }
+            updateSelectionCounter();
+        }
+
+        function clearSelection() {
+            selectedCells.forEach(a1 => {
+                const cell = document.querySelector(`[data-a1="${a1}"]`);
+                if (cell) {
+                    cell.classList.remove('selected-cell');
+                }
+            });
+            selectedCells.clear();
+            updateSelectionCounter();
+        }
+
+        async function saveBulkNotes(noteText) {
+            const progressContainer = document.getElementById('progressContainer');
+            const progressFill = document.getElementById('progressFill');
+            const progressText = document.getElementById('progressText');
+            const totalCells = selectedCells.size;
+            let processedCells = 0;
+
+            // Disable buttons during processing
+            saveNoteBtn.disabled = true;
+            banCellBtn.disabled = true;
+            cancelNoteBtn.disabled = true;
+
+            // Show progress bar
+            progressContainer.style.display = 'block';
+            progressText.textContent = `Processing: 0 of ${totalCells} cells`;
+            progressFill.style.width = '0%';
+
+            try {
+                for (const a1 of selectedCells) {
+                    try {
+                        const response = await fetch('/save-note', {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json',
+                            },
+                            body: JSON.stringify({
+                                id: currentSpreadsheetId,
+                                a1: a1,
+                                note: noteText
+                            })
+                        });
+
+                        const result = await response.json();
+                        
+                        if (result.success) {
+                            if (noteText) {
+                                fetchedNotes[a1] = noteText;
+                            } else {
+                                delete fetchedNotes[a1];
+                            }
+                            const cell = document.querySelector(`[data-a1="${a1}"]`);
+                            if (cell) {
+                                if (noteText) {
+                                    cell.classList.add('has-note');
+                                } else {
+                                    cell.classList.remove('has-note');
+                                }
+                            }
+                        }
+
+                        // Update progress
+                        processedCells++;
+                        const progress = (processedCells / totalCells) * 100;
+                        progressFill.style.width = `${progress}%`;
+                        progressText.textContent = `Processing: ${processedCells} of ${totalCells} cells`;
+
+                    } catch (error) {
+                        console.error(`Error processing cell ${a1}:`, error);
+                    }
+                }
+
+                // Show completion message briefly
+                progressText.textContent = 'Complete!';
+                await new Promise(resolve => setTimeout(resolve, 1000));
+
+                clearSelection();
+                hideNoteEditor();
+            } catch (error) {
+                console.error("Error in bulk note processing:", error);
+                progressText.textContent = 'Error occurred during processing';
+                await new Promise(resolve => setTimeout(resolve, 2000));
+            } finally {
+                // Reset UI
+                progressContainer.style.display = 'none';
+                progressFill.style.width = '0%';
+                saveNoteBtn.disabled = false;
+                banCellBtn.disabled = false;
+                cancelNoteBtn.disabled = false;
+            }
+        }
 
         function saveState() {
             try {
@@ -246,14 +443,19 @@
         }
 
         function showNoteEditor(cellElement, a1Notation) {
+            if (isMultiSelectMode || selectedCells.size > 0) {
+                toggleCellSelection(cellElement, a1Notation);
+                return;
+            }
+
             hideNoteEditor();
             console.log(`Editing note for cell: ${a1Notation}`);
 
             noteEditorA1.value = a1Notation;
             noteEditorCellId.value = cellElement.id;
-
             noteEditorText.value = fetchedNotes[a1Notation] || '';
 
+            noteEditorPopup.classList.remove('centered');
             const rect = cellElement.getBoundingClientRect();
             noteEditorPopup.style.left = `${window.scrollX + rect.left}px`;
             noteEditorPopup.style.top = `${window.scrollY + rect.bottom + 5}px`;
@@ -263,14 +465,26 @@
 
         function hideNoteEditor() {
             noteEditorPopup.style.display = 'none';
+            noteEditorPopup.classList.remove('centered');
             noteEditorText.value = '';
             noteEditorA1.value = '';
             noteEditorCellId.value = '';
+            // Reset progress bar
+            const progressContainer = document.getElementById('progressContainer');
+            const progressFill = document.getElementById('progressFill');
+            progressContainer.style.display = 'none';
+            progressFill.style.width = '0%';
         }
 
         async function saveNote() {
-            const a1Notation = noteEditorA1.value;
             const noteText = noteEditorText.value.trim();
+
+            if (selectedCells.size > 0) {
+                await saveBulkNotes(noteText);
+                return;
+            }
+
+            const a1Notation = noteEditorA1.value;
             const cellId = noteEditorCellId.value;
 
             if (!a1Notation || !currentSpreadsheetId || cellId === '') {
@@ -553,6 +767,7 @@
 
                 if (fullHeader.length > 0) {
                     populateColumnSelector(fullHeader);
+                    populateReviewerFilter(filteredRows);
                     applyColsButton.disabled = false;
                     columnSettingsToggle.disabled = false;
                     hideZeroSumCheckbox.disabled = (sumColumnIndex === -1);
@@ -644,54 +859,68 @@
             errorMessage.style.display = 'none';
 
             let rowsToProcess = filteredRows;
+            let currentRowIndices = dataRowSheetIndices.slice(); // Create a copy of original indices
             const hideZero = hideZeroSumCheckbox.checked;
+            const selectedReviewer = reviewerFilter.value;
 
-            // Find the original indices of all VISIBLE '∑' columns
+            // First filter by reviewer if one is selected
+            if (selectedReviewer) {
+                const filteredData = rowsToProcess.reduce((acc, row, idx) => {
+                    if (row && row[3] === selectedReviewer) {
+                        acc.rows.push(row);
+                        acc.indices.push(currentRowIndices[idx]);
+                    }
+                    return acc;
+                }, { rows: [], indices: [] });
+                
+                rowsToProcess = filteredData.rows;
+                currentRowIndices = filteredData.indices;
+            }
+
+            // Then apply the sum filter
             const visibleSumIndices = [];
             selectedIndices.forEach((originalIndex, i) => {
-                const headerValue = selectedHeaders[i]; // Get header corresponding to this selected index
-                // Check if the header is '∑' AND if it exists in the full header at this original index
+                const headerValue = selectedHeaders[i];
                 if (headerValue === '∑' && fullHeader[originalIndex] === '∑') {
                     visibleSumIndices.push(originalIndex);
                 }
             });
 
             if (hideZero && visibleSumIndices.length > 0) {
-                 console.log(`Filtering rows where value is 0 for ALL visible ∑ columns (indices: ${visibleSumIndices.join(', ')})`);
-                 rowsToProcess = rowsToProcess.filter(row => {
-                    if (!row) return true; // Keep empty rows? Or filter them?
-
+                const filteredData = rowsToProcess.reduce((acc, row, idx) => {
+                    if (!row) return acc;
+                    
                     let allVisibleSumsAreZero = true;
                     for (const sumIndex of visibleSumIndices) {
                         if (row.length > sumIndex) {
                             const value = String(row[sumIndex]).trim();
-                            // Consider it non-zero if it's not empty and not numerically zero
                             if (value !== '' && parseFloat(value) !== 0) {
                                 allVisibleSumsAreZero = false;
-                                break; // Found a non-zero sum, keep the row
+                                break;
                             }
-                             // Treat potentially non-numeric values or empty strings as zero for filtering
-                        } else {
-                             // If row doesn't even have the column, treat it as zero for filtering
                         }
                     }
-                    // Return false (filter out) only if all visible sums were zero
-                    return !allVisibleSumsAreZero;
-                 });
-                 console.log(`Rows after filtering: ${rowsToProcess.length}`);
-            } else if (hideZero) {
-                console.log("Hide zero sum checked, but no '∑' columns are currently visible.");
+                    
+                    if (!allVisibleSumsAreZero) {
+                        acc.rows.push(row);
+                        acc.indices.push(currentRowIndices[idx]);
+                    }
+                    return acc;
+                }, { rows: [], indices: [] });
+
+                rowsToProcess = filteredData.rows;
+                currentRowIndices = filteredData.indices;
             }
 
-            generateFilteredTable(selectedHeaders, selectedIndices, rowsToProcess);
+            generateFilteredTable(selectedHeaders, selectedIndices, rowsToProcess, currentRowIndices);
         }
 
-        function generateFilteredTable(selectedHeaders, selectedIndices, rowsToDisplay) {
+        function generateFilteredTable(selectedHeaders, selectedIndices, rowsToDisplay, currentRowIndices) {
             tableContainer.innerHTML = '';
 
-            if (!selectedHeaders || selectedHeaders.length === 0 ) {
-                 tableContainer.innerHTML = '<p>No columns selected.</p>';
-                 return;
+            if (!selectedHeaders || selectedHeaders.length === 0) {
+                tableContainer.innerHTML = '<p>No columns selected.</p>';
+                return;
             }
 
             let numColDisplayIndex = -1;
@@ -739,11 +968,8 @@
             rowsToDisplay.forEach((rowData, displayRowIndex) => {
                 const row = document.createElement('tr');
 
-                // Use the actual sheet row number from dataRowSheetIndices
-                let sheetRowNum = -1;
-                if (dataRowSheetIndices && dataRowSheetIndices.length > displayRowIndex) {
-                    sheetRowNum = dataRowSheetIndices[displayRowIndex];
-                }
+                // Use the actual sheet row number from currentRowIndices
+                let sheetRowNum = currentRowIndices[displayRowIndex];
 
                 selectedIndices.forEach(originalColIndex => {
                      const td = document.createElement('td');
@@ -753,10 +979,11 @@
                      let cellId = `cell-display-${displayRowIndex}-col-${originalColIndex}`;
                      let noteKey = 'invalid-note-key';
 
-                     if (sheetRowNum !== -1) {
+                     if (sheetRowNum) {
                          a1Notation = `${currentSheetName}!${colLetter}${sheetRowNum}`;
                          cellId = `cell-${sheetRowNum}-${originalColIndex}`;
                          noteKey = a1Notation;
+                         td.setAttribute('data-a1', a1Notation);
                      } else {
                          td.style.cursor = 'not-allowed';
                      }
@@ -821,6 +1048,38 @@
             table.appendChild(tbody);
             tableContainer.appendChild(table);
         }
+
+        // Add function to populate reviewer filter
+        function populateReviewerFilter(rows) {
+            const reviewers = new Set();
+            rows.forEach(row => {
+                if (row && row[3]) { // Column D is index 3
+                    reviewers.add(row[3]);
+                }
+            });
+
+            reviewerFilter.innerHTML = '<option value="">All</option>';
+            Array.from(reviewers).sort().forEach(reviewer => {
+                const option = document.createElement('option');
+                option.value = reviewer;
+                option.textContent = reviewer;
+                reviewerFilter.appendChild(option);
+            });
+        }
+
+        // Add click handler for selection counter
+        document.getElementById('selectionCounter').addEventListener('click', () => {
+            if (selectedCells.size > 0) {
+                hideNoteEditor();
+                noteEditorA1.value = Array.from(selectedCells)[0]; // Use first cell for reference
+                noteEditorText.value = ''; // Start with empty note
+                
+                // Center the editor in the viewport
+                noteEditorPopup.classList.add('centered');
+                noteEditorPopup.style.display = 'block';
+                noteEditorText.focus();
+            }
+        });
 
     </script>
 
